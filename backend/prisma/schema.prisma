@@ -1,0 +1,538 @@
+// CampusHub Enterprise Database Schema (PostgreSQL + Prisma)
+// Designed in 3rd Normal Form (3NF)
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum UserRole {
+  ADMIN
+  STUDENT
+  FACULTY
+  PLACEMENT_OFFICER
+  CLUB_HEAD
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  EXCUSED
+}
+
+enum ApplicationStatus {
+  APPLIED
+  SHORTLISTED
+  INTERVIEW_SCHEDULED
+  SELECTED
+  REJECTED
+}
+
+enum ClubRole {
+  MEMBER
+  EXECUTIVE
+  VICE_PRESIDENT
+  PRESIDENT
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+}
+
+enum TargetRole {
+  ALL
+  STUDENT
+  FACULTY
+}
+
+// ==========================================
+// AUTH & USER IDENTITY DOMAIN
+// ==========================================
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique @db.VarChar(255)
+  passwordHash String    @db.VarChar(255)
+  role         UserRole  @default(STUDENT)
+  firstName    String    @db.VarChar(100)
+  lastName     String    @db.VarChar(100)
+  phone        String?   @db.VarChar(20)
+  avatarUrl    String?   @db.Text
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // 1-to-1 Profile Extensions
+  studentProfile StudentProfile?
+  facultyProfile FacultyProfile?
+
+  // Relations
+  refreshTokens      RefreshToken[]
+  notifications      Notification[]
+  sentAnnouncements  Announcement[]
+  eventRegistrations EventRegistration[]
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  token     String   @unique @db.Text
+  userId    String   @db.Uuid
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ==========================================
+// ACADEMIC STRUCTURE DOMAIN
+// ==========================================
+
+model Department {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique @db.VarChar(20) // e.g. "CSE", "ECE"
+  name        String   @db.VarChar(150)
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  courses       Course[]
+  faculties     FacultyProfile[]
+  students      StudentProfile[]
+  subjects      Subject[]
+  announcements Announcement[]
+
+  @@map("departments")
+}
+
+model Course {
+  id             String   @id @default(uuid()) @db.Uuid
+  code           String   @unique @db.VarChar(20) // e.g. "BTECH-CSE"
+  name           String   @db.VarChar(150) // e.g. "Bachelor of Technology in Computer Science"
+  departmentId   String   @db.Uuid
+  durationYears  Int      @default(4)
+  totalSemesters Int      @default(8)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  department Department       @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  students   StudentProfile[]
+  subjects   Subject[]
+
+  @@map("courses")
+}
+
+model AcademicYear {
+  id        String   @id @default(uuid()) @db.Uuid
+  yearLabel String   @unique @db.VarChar(20) // e.g. "2024-2025"
+  isCurrent Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  semesters Semester[]
+
+  @@map("academic_years")
+}
+
+model Semester {
+  id             String   @id @default(uuid()) @db.Uuid
+  semesterNumber Int      // 1 to 8
+  academicYearId String   @db.Uuid
+  startDate      DateTime
+  endDate        DateTime
+  isCurrent      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  enrollments        StudentEnrollment[]
+  subjectAllocations SubjectAllocation[]
+  timetableSlots     TimetableSlot[]
+
+  @@unique([academicYearId, semesterNumber])
+  @@map("semesters")
+}
+
+model Subject {
+  id             String   @id @default(uuid()) @db.Uuid
+  code           String   @unique @db.VarChar(20) // e.g. "CS301"
+  name           String   @db.VarChar(150)
+  credits        Int      @default(3)
+  departmentId   String   @db.Uuid
+  courseId       String   @db.Uuid
+  semesterNumber Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  course     Course     @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+  allocations    SubjectAllocation[]
+  enrollments    StudentEnrollment[]
+  assignments    Assignment[]
+  timetableSlots TimetableSlot[]
+
+  @@map("subjects")
+}
+
+// ==========================================
+// USER PROFILES DOMAIN
+// ==========================================
+
+model StudentProfile {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @unique @db.Uuid
+  rollNumber      String   @unique @db.VarChar(50) // e.g. "2024CSE001"
+  departmentId    String?  @db.Uuid
+  courseId        String?  @db.Uuid
+  currentSemester Int      @default(1)
+  batchYear       Int      // e.g. 2024
+  cgpa            Decimal  @default(0.00) @db.Decimal(4, 2)
+  backlogsCount   Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  course     Course?     @relation(fields: [courseId], references: [id], onDelete: SetNull)
+
+  enrollments       StudentEnrollment[]
+  attendanceRecords AttendanceRecord[]
+  submissions       AssignmentSubmission[]
+  clubMemberships   ClubMembership[]
+  jobApplications   JobApplication[]
+
+  @@index([rollNumber])
+  @@index([departmentId])
+  @@index([courseId])
+  @@map("student_profiles")
+}
+
+model FacultyProfile {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @unique @db.Uuid
+  employeeId    String   @unique @db.VarChar(50) // e.g. "FAC202401"
+  departmentId  String?  @db.Uuid
+  designation   String   @db.VarChar(100) // e.g. "Assistant Professor"
+  qualification String?  @db.VarChar(150)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  allocations        SubjectAllocation[]
+  attendanceSessions AttendanceSession[]
+  assignments        Assignment[]
+  timetableSlots     TimetableSlot[]
+  advisedClubs       Club[]
+
+  @@index([employeeId])
+  @@index([departmentId])
+  @@map("faculty_profiles")
+}
+
+// ==========================================
+// ACADEMIC ALLOCATIONS & ENROLLMENT (JUNCTIONS)
+// ==========================================
+
+model SubjectAllocation {
+  id         String   @id @default(uuid()) @db.Uuid
+  subjectId  String   @db.Uuid
+  facultyId  String   @db.Uuid
+  semesterId String   @db.Uuid
+  section    String   @default("A") @db.VarChar(10) // Section A, B, C
+  createdAt  DateTime @default(now())
+
+  subject  Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  faculty  FacultyProfile @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  semester Semester       @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+
+  attendanceSessions AttendanceSession[]
+
+  @@unique([subjectId, facultyId, semesterId, section])
+  @@map("subject_allocations")
+}
+
+model StudentEnrollment {
+  id         String   @id @default(uuid()) @db.Uuid
+  studentId  String   @db.Uuid
+  subjectId  String   @db.Uuid
+  semesterId String   @db.Uuid
+  enrolledAt DateTime @default(now())
+
+  student  StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subject  Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  semester Semester       @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, subjectId, semesterId])
+  @@map("student_enrollments")
+}
+
+// ==========================================
+// TIMETABLE & ATTENDANCE ENGINE
+// ==========================================
+
+model TimetableSlot {
+  id         String    @id @default(uuid()) @db.Uuid
+  semesterId String    @db.Uuid
+  subjectId  String    @db.Uuid
+  facultyId  String    @db.Uuid
+  dayOfWeek  DayOfWeek
+  startTime  String    @db.VarChar(10) // e.g. "09:00"
+  endTime    String    @db.VarChar(10) // e.g. "10:00"
+  roomNumber String    @db.VarChar(50)
+
+  semester Semester       @relation(fields: [semesterId], references: [id], onDelete: Cascade)
+  subject  Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  faculty  FacultyProfile @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+
+  attendanceSessions AttendanceSession[]
+
+  @@unique([facultyId, dayOfWeek, startTime, semesterId])
+  @@unique([roomNumber, dayOfWeek, startTime, semesterId])
+  @@map("timetable_slots")
+}
+
+model AttendanceSession {
+  id           String   @id @default(uuid()) @db.Uuid
+  allocationId String   @db.Uuid
+  facultyId    String   @db.Uuid
+  slotId       String?  @db.Uuid
+  sessionDate  DateTime @db.Date
+  createdAt    DateTime @default(now())
+
+  allocation SubjectAllocation @relation(fields: [allocationId], references: [id], onDelete: Cascade)
+  faculty    FacultyProfile    @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  slot       TimetableSlot?    @relation(fields: [slotId], references: [id], onDelete: SetNull)
+
+  records AttendanceRecord[]
+
+  @@unique([allocationId, sessionDate, slotId])
+  @@map("attendance_sessions")
+}
+
+model AttendanceRecord {
+  id        String           @id @default(uuid()) @db.Uuid
+  sessionId String           @db.Uuid
+  studentId String           @db.Uuid
+  status    AttendanceStatus @default(PRESENT)
+
+  session AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, studentId])
+  @@map("attendance_records")
+}
+
+// ==========================================
+// ASSIGNMENTS DOMAIN
+// ==========================================
+
+model Assignment {
+  id            String   @id @default(uuid()) @db.Uuid
+  subjectId     String   @db.Uuid
+  facultyId     String   @db.Uuid
+  title         String   @db.VarChar(200)
+  description   String   @db.Text
+  attachmentUrl String?  @db.Text
+  dueDate       DateTime
+  maxMarks      Int      @default(100)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  subject Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  faculty FacultyProfile @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+
+  submissions AssignmentSubmission[]
+
+  @@map("assignments")
+}
+
+model AssignmentSubmission {
+  id            String    @id @default(uuid()) @db.Uuid
+  assignmentId  String    @db.Uuid
+  studentId     String    @db.Uuid
+  submissionUrl String    @db.Text
+  submittedAt   DateTime  @default(now())
+  marksObtained Int?
+  feedback      String?   @db.Text
+  evaluatedAt   DateTime?
+
+  assignment Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student    StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, studentId])
+  @@map("assignment_submissions")
+}
+
+// ==========================================
+// CLUBS & EVENTS DOMAIN
+// ==========================================
+
+model Club {
+  id               String   @id @default(uuid()) @db.Uuid
+  code             String   @unique @db.VarChar(30)
+  name             String   @db.VarChar(150)
+  description      String   @db.Text
+  logoUrl          String?  @db.Text
+  advisorFacultyId String?  @db.Uuid
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  advisorFaculty FacultyProfile? @relation(fields: [advisorFacultyId], references: [id], onDelete: SetNull)
+
+  memberships ClubMembership[]
+  events      Event[]
+
+  @@map("clubs")
+}
+
+model ClubMembership {
+  id       String   @id @default(uuid()) @db.Uuid
+  clubId   String   @db.Uuid
+  studentId String  @db.Uuid
+  role     ClubRole @default(MEMBER)
+  joinedAt DateTime @default(now())
+
+  club    Club           @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([clubId, studentId])
+  @@map("club_memberships")
+}
+
+model Event {
+  id          String   @id @default(uuid()) @db.Uuid
+  clubId      String   @db.Uuid
+  title       String   @db.VarChar(200)
+  description String   @db.Text
+  venue       String   @db.VarChar(150)
+  eventDate   DateTime
+  maxSeats    Int?
+  bannerUrl   String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  club Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
+
+  registrations EventRegistration[]
+
+  @@map("events")
+}
+
+model EventRegistration {
+  id           String   @id @default(uuid()) @db.Uuid
+  eventId      String   @db.Uuid
+  userId       String   @db.Uuid
+  registeredAt DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@map("event_registrations")
+}
+
+// ==========================================
+// PLACEMENTS & CORPORATE DOMAIN
+// ==========================================
+
+model Company {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(150)
+  industry  String   @db.VarChar(100)
+  website   String?  @db.VarChar(255)
+  hrName    String   @db.VarChar(100)
+  hrEmail   String   @db.VarChar(150)
+  createdAt DateTime @default(now())
+
+  placementDrives PlacementDrive[]
+
+  @@map("companies")
+}
+
+model PlacementDrive {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @db.Uuid
+  jobTitle       String   @db.VarChar(150)
+  jobDescription String   @db.Text
+  packageLPA     Decimal  @db.Decimal(5, 2) // e.g. 12.50 LPA
+  minCgpa        Decimal  @default(6.00) @db.Decimal(4, 2)
+  maxBacklogs    Int      @default(0)
+  deadline       DateTime
+  createdAt      DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  applications JobApplication[]
+
+  @@map("placement_drives")
+}
+
+model JobApplication {
+  id        String            @id @default(uuid()) @db.Uuid
+  driveId   String            @db.Uuid
+  studentId String            @db.Uuid
+  status    ApplicationStatus @default(APPLIED)
+  appliedAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  drive   PlacementDrive @relation(fields: [driveId], references: [id], onDelete: Cascade)
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([driveId, studentId])
+  @@map("job_applications")
+}
+
+// ==========================================
+// ANNOUNCEMENTS & NOTIFICATIONS DOMAIN
+// ==========================================
+
+model Announcement {
+  id           String     @id @default(uuid()) @db.Uuid
+  authorId     String     @db.Uuid
+  title        String     @db.VarChar(200)
+  content      String     @db.Text
+  targetRole   TargetRole @default(ALL)
+  departmentId String?    @db.Uuid
+  createdAt    DateTime   @default(now())
+
+  author     User        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  @@map("announcements")
+}
+
+model Notification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  title     String   @db.VarChar(150)
+  message   String   @db.Text
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("notifications")
+}
